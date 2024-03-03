@@ -16,7 +16,7 @@ sdbus-notifications = {version = "^1.0.1", optional = true }
 [tool.poetry.extras]
 notifications = ["sdbus-notifications"]
 
-[project.scripts]
+[tool.poetry.scripts]
 wmenu = "wifi_menu:main_wrapper"
 
 [build-system]
