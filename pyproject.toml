@@ -1,0 +1,62 @@
+[tool.poetry]
+name = "wifi-menu"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+license = "GPLv3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+sdbus = "^0.11.1"
+sdbus-networkmanager = "^2.0.0"
+fzf-but-typed = "^0.46.2"
+sdbus-notifications = {version = "^1.0.1", optional = true }
+
+[tool.poetry.extras]
+notifications = ["sdbus-notifications"]
+
+[project.scripts]
+wmenu = "wifi_menu:main_wrapper"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+
+########################################
+
+
+# https://github.com/python-lsp/pylsp-mypy
+[tool.pylsp-mypy]
+enabled = true
+live_mode = true
+dmypy = false
+strict = false
+
+# https://docs.astral.sh/ruff/settings
+# https://docs.astral.sh/ruff/configuration
+[tool.ruff]
+# builtins = ["print_err"]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = ["E731"]
+
+[tool.black]
+line-length = 120
+
+# https://github.com/google/yapf
+[tool.yapf]
+based_on_style = 'google'
+coalesce_brackets = true
+column_limit = 110
+# continuation_align_style = "fixed"
+continuation_align_style = "valign-right"
+# continuation_align_style = "space"
+dedent_closing_brackets = false
+indent_closing_brackets = false
+join_multiple_lines = false
+spaces_before_comment = 3
+split_arguments_when_comma_terminated = true
+split_penalty_after_unary_operator = 9999999
