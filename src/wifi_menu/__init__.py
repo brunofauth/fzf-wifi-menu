@@ -16,14 +16,10 @@ from itertools import starmap, tee
 from typing import TYPE_CHECKING, cast
 
 import sdbus
-from fzf_but_typed import fzf_iter, SearchOptions, LayoutOptions, LayoutType, InterfaceOptions, Binding, Key, ActionSimple, ActionWithArg, ActionWithArgType, ExitStatusCode as FzfExitStatus
-from sdbus_async.networkmanager import (NetworkManager, DeviceType, NetworkDeviceGeneric,
-                                        NetworkDeviceWireless, NetworkManagerSettings,
-                                        NetworkConnectionSettings, AccessPoint, ActiveConnection,
-                                        ConnectionState)
-from sdbus_async.networkmanager.exceptions import NmAgentManagerNoSecretsError
-from sdbus_async.networkmanager.settings import \
-        ConnectionProfile, ConnectionSettings, WirelessSettings, WirelessSecuritySettings
+import fzf_but_typed as fbt
+import sdbus_async.networkmanager as nm
+import sdbus_async.networkmanager.exceptions as nme
+import sdbus_async.networkmanager.settings as nms
 
 try:
     from sdbus_async.notifications import FreedesktopNotifications
@@ -110,65 +106,65 @@ class ExitStatus(IntEnum):
 
 
 @cache
-def get_nm() -> NetworkManager:
+def get_nm() -> nm.NetworkManager:
     sdbus.set_default_bus(sdbus.sd_bus_open_system())
-    return NetworkManager()
+    return nm.NetworkManager()
 
 
 @cache
-def get_nm_settings() -> NetworkManagerSettings:
-    return NetworkManagerSettings()
+def get_nm_settings() -> nm.NetworkManagerSettings:
+    return nm.NetworkManagerSettings()
 
 
 @cache
-async def get_nm_all_connection_settings() -> dict[str, NetworkConnectionSettings]:
+async def get_nm_all_connection_settings() -> dict[str, nm.NetworkConnectionSettings]:
     connections: list[str] = await get_nm_settings().connections
-    return {path: NetworkConnectionSettings(path) for path in connections}
+    return {path: nm.NetworkConnectionSettings(path) for path in connections}
 
 
 @cache
-async def get_nm_devices() -> dict[str, NetworkDeviceGeneric]:
+async def get_nm_devices() -> dict[str, nm.NetworkDeviceGeneric]:
     devices: list[str] = await get_nm().devices
-    return {path: NetworkDeviceGeneric(path) for path in devices}
+    return {path: nm.NetworkDeviceGeneric(path) for path in devices}
 
 
-async def _is_wifi_dev(path: str, dev: NetworkDeviceGeneric) -> str | None:
-    if (await dev.device_type) == DeviceType.WIFI:
+async def _is_wifi_dev(path: str, dev: nm.NetworkDeviceGeneric) -> str | None:
+    if (await dev.device_type) == nm.DeviceType.WIFI:
         return path
     return None
 
 
 async def _filter_wifi_devs(
-    devs: Iterable[tuple[str, NetworkDeviceGeneric]],
-) -> Iterable[tuple[str, NetworkDeviceWireless]]:
+    devs: Iterable[tuple[str, nm.NetworkDeviceGeneric]],
+) -> Iterable[tuple[str, nm.NetworkDeviceWireless]]:
     paths = filter(None, await asyncio.gather(*starmap(_is_wifi_dev, devs)))
-    return ((path, NetworkDeviceWireless(path)) for path in paths)
+    return ((path, nm.NetworkDeviceWireless(path)) for path in paths)
 
 
 @cache
-async def get_nm_wifi_devices() -> dict[str, NetworkDeviceWireless]:
+async def get_nm_wifi_devices() -> dict[str, nm.NetworkDeviceWireless]:
     devices = await get_nm_devices()
     return dict(await _filter_wifi_devs(devices.items()))
 
 
 async def _ignore_no_secrets(coro: Awaitable[_T]) -> _T | None:
-    with suppress(NmAgentManagerNoSecretsError):
+    with suppress(nme.NmAgentManagerNoSecretsError):
         return await coro
     return None
 
 
 async def _get_cs_profiles(
-    ncs_many: Iterable[NetworkConnectionSettings],
-) -> Iterable[ConnectionProfile | None]:
+    ncs_many: Iterable[nm.NetworkConnectionSettings],
+) -> Iterable[nms.ConnectionProfile | None]:
     return await asyncio.gather(*(_ignore_no_secrets(ncs.get_profile()) for ncs in ncs_many))
 
 
-async def get_access_points(dev: NetworkDeviceWireless) -> dict[str, AccessPoint]:
+async def get_access_points(dev: nm.NetworkDeviceWireless) -> dict[str, nm.AccessPoint]:
     access_points: list[str] = await dev.access_points
-    return {path: AccessPoint(path) for path in access_points}
+    return {path: nm.AccessPoint(path) for path in access_points}
 
 
-async def _get_ssid_ap_pair(ap: AccessPoint) -> tuple[str, AccessPoint]:
+async def _get_ssid_ap_pair(ap: nm.AccessPoint) -> tuple[str, nm.AccessPoint]:
     return cast(bytes, await ap.ssid).decode('utf-8', errors="replace"), ap
 
 
@@ -184,34 +180,34 @@ def fzf_wrapper(data: Iterable[SupportsStr], **kwargs) -> list[str]:
         if (so := kwargs.get('search', None)) is not None:
             so.exact = True
         else:
-            kwargs['search'] = SearchOptions(exact=False)
-        return fzf_iter(data, **kwargs)
+            kwargs['search'] = fbt.SearchOptions(exact=False)
+        return fbt.fzf_iter(data, **kwargs)
     except sp.CalledProcessError as error:
         match error.returncode:
-            case FzfExitStatus.NO_MATCH:
+            case fbt.ExitStatusCode.NO_MATCH:
                 logger.info("No such item to select")
                 raise SystemExit(ExitStatus.NOT_CHANGED)
-            case FzfExitStatus.USER_INTERRUPTED:
+            case fbt.ExitStatusCode.USER_INTERRUPTED:
                 logger.info("Selection aborted by user.")
                 raise SystemExit(ExitStatus.NOT_CHANGED)
-            case FzfExitStatus.ERROR:
+            case fbt.ExitStatusCode.ERROR:
                 logger.error("'fzf' returned an error: %s", '\n'.join(error.stderr))
                 raise SystemExit(ExitStatus.GENERIC_ERROR)
             case other:
                 raise NotImplementedError()
 
 
-def new_profile(ssid: str, interface_id: str) -> ConnectionProfile:
+def new_profile(ssid: str, interface_id: str) -> nms.ConnectionProfile:
     from getpass import getpass
-    return ConnectionProfile(
-        connection=ConnectionSettings(
+    return nms.ConnectionProfile(
+        connection=nms.ConnectionSettings(
             autoconnect=True,
             connection_id=ssid,
             connection_type="802-11-wireless",
             interface_name=interface_id,
         ),
-        wireless=WirelessSettings(ssid=ssid.encode("utf-8")),
-        wireless_security=WirelessSecuritySettings(key_mgmt="wpa-psk", psk=getpass()),
+        wireless=nms.WirelessSettings(ssid=ssid.encode("utf-8")),
+        wireless_security=nms.WirelessSecuritySettings(key_mgmt="wpa-psk", psk=getpass()),
     )
 
 
@@ -223,7 +219,7 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
     if len(wifi_devs := await get_nm_wifi_devices()) == 0:
         logger.info("Couldn't find wireless device from NetworkManager. Exiting.")
         return ExitStatus.NO_WIFI_DEVICE
-    wifi_dev: NetworkDeviceWireless
+    wifi_dev: nm.NetworkDeviceWireless
     wifi_dev_path, wifi_dev = next(iter(wifi_devs.items()))
     wifi_interface: str = await wifi_dev.interface
     logger.debug("Using wireless device: %s (interface=%s)", wifi_dev_path, wifi_interface)
@@ -239,8 +235,8 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
     if len(ap_paths := cast(list[str], await wifi_dev.access_points)) == 0:
         logger.info("Device on interface '%s' hasn't detected any access points. Exiting.", wifi_interface)
         return ExitStatus.NO_ACCESS_POINT
-    access_points = [AccessPoint(path) for path in cast(list[str], ap_paths)]
-    ap_by_ssid: dict[str, AccessPoint] = \
+    access_points = [nm.AccessPoint(path) for path in cast(list[str], ap_paths)]
+    ap_by_ssid: dict[str, nm.AccessPoint] = \
         dict(await asyncio.gather(*map(_get_ssid_ap_pair, access_points)))
     ssids = list(ap_by_ssid.keys())
 
@@ -251,23 +247,23 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
     logger.debug(cmd_delete_profile)
     # yapf: disable
     result = fzf_wrapper(ap_by_ssid.keys(),
-        layout=LayoutOptions(
-            layout=LayoutType.REVERSE_LIST,
+        layout=fbt.LayoutOptions(
+            layout=fbt.LayoutType.REVERSE_LIST,
             header="\n".join(FZF_HEADER_PARTS),
             header_first=True,
         ),
-        interface=InterfaceOptions(bind=[
-            Binding(binding=Key.CTRL_D, actions=[
-                ActionWithArg(
-                    action_type=ActionWithArgType.EXECUTE,
+        interface=fbt.InterfaceOptions(bind=[
+            fbt.Binding(binding=fbt.Key.CTRL_D, actions=[
+                fbt.ActionWithArg(
+                    action_type=fbt.ActionWithArgType.EXECUTE,
                     argument=cmd_delete_profile),
             ]),
-            Binding(binding=Key.CTRL_R, actions=[
-                ActionWithArg(
-                    action_type=ActionWithArgType.RELOAD,
+            fbt.Binding(binding=fbt.Key.CTRL_R, actions=[
+                fbt.ActionWithArg(
+                    action_type=fbt.ActionWithArgType.RELOAD,
                     argument=FZF_CMD_RESCAN)
             ]),
-            Binding(binding=Key.ESC, actions=[ActionSimple.CANCEL]),
+            fbt.Binding(binding=fbt.Key.ESC, actions=[fbt.ActionSimple.CANCEL]),
         ])
     )
     chosen_ap_ssid = result[0]
@@ -278,7 +274,7 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
     # yapf: enable
 
     ncs_paths: list[str] = await get_nm_settings().connections
-    network_conn_settings = list(map(NetworkConnectionSettings, ncs_paths))
+    network_conn_settings = list(map(nm.NetworkConnectionSettings, ncs_paths))
     profiles = await _get_cs_profiles(network_conn_settings)
     is_profile_new = False
 
@@ -303,17 +299,17 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
         device=wifi_dev_path,
         specific_object=chosen_ap_path,
     )
-    active_connection = ActiveConnection(ac_path)
+    active_connection = nm.ActiveConnection(ac_path)
 
     state_changed_signal = aiter(active_connection.state_changed)
     state, _reason = await anext(state_changed_signal)
-    if state != ConnectionState.ACTIVATING:
-        logger.error("Got unexpected signal from dbus/nm: %s", ConnectionState(state).name)
+    if state != nm.ConnectionState.ACTIVATING:
+        logger.error("Got unexpected signal from dbus/nm: %s", nm.ConnectionState(state).name)
         return ExitStatus.GENERIC_ERROR
 
     state, _reason = await anext(state_changed_signal)
     match state:
-        case ConnectionState.ACTIVATED:
+        case nm.ConnectionState.ACTIVATED:
             logger.info("Successfully connected to: %s", chosen_ap_ssid)
             try:
                 notification_server = FreedesktopNotifications(bus=sdbus.sd_bus_open_user())
@@ -327,12 +323,12 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
             except NameError:
                 pass
             if is_profile_new:
-                ncs = NetworkConnectionSettings(chosen_conn_path)
+                ncs = nm.NetworkConnectionSettings(chosen_conn_path)
                 await ncs.get_profile()   # Without this, the next line fails
                 await ncs.save()
                 logger.debug("Saved profile settings for new connection")
             return ExitStatus.SUCCESS
-        case ConnectionState.DEACTIVATED:
+        case nm.ConnectionState.DEACTIVATED:
             logger.info("Failed to connect to: %s", chosen_ap_ssid)
             try:
                 notification_server = FreedesktopNotifications(bus=sdbus.sd_bus_open_user())
@@ -347,13 +343,13 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
             except NameError:
                 pass
             if is_profile_new:
-                ncs = NetworkConnectionSettings(chosen_conn_path)
+                ncs = nm.NetworkConnectionSettings(chosen_conn_path)
                 await ncs.get_profile()   # Without this, the next line fails
                 await ncs.delete()
                 logger.debug("Discarded profile settings for new connection")
             return ExitStatus.NOT_CHANGED
         case other:
-            logger.error("Got unexpected signal from dbus/nm: %s", ConnectionState(state).name)
+            logger.error("Got unexpected signal from dbus/nm: %s", nm.ConnectionState(state).name)
             return ExitStatus.GENERIC_ERROR
 
 
