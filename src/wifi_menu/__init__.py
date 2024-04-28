@@ -164,8 +164,21 @@ async def get_access_points(dev: nm.NetworkDeviceWireless) -> dict[str, nm.Acces
     return {path: nm.AccessPoint(path) for path in access_points}
 
 
-async def _get_ssid_ap_pair(ap: nm.AccessPoint) -> tuple[str, nm.AccessPoint]:
-    return cast(bytes, await ap.ssid).decode('utf-8', errors="replace"), ap
+async def _get_ssid(ap: nm.AccessPoint) -> tuple[str, nm.AccessPoint]:
+    return cast(bytes, await ap.ssid).decode('utf-8', errors="replace")
+
+
+async def _get_ap_path_by_ssid(ap_paths: list[str]) -> dict[str, str]:
+    access_points = [nm.AccessPoint(path) for path in ap_paths]
+    ssids = await asyncio.gather(*map(_get_ssid, access_points))
+    return dict(zip(ssids, ap_paths))
+
+
+async def _get_ap_or_exit(wifi_dev: nm.NetworkDeviceWireless) -> list[str]:
+    if len(ap_paths := cast(list[str], await wifi_dev.access_points)) == 0:
+        logger.info("Device on interface '%s' hasn't detected any access points. Exiting.", wifi_interface)
+        sys.exit(ExitStatus.NO_ACCESS_POINT)
+    return ap_paths
 
 
 def get_args() -> dict[str, Any]:
@@ -232,12 +245,8 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
                 break
         logger.debug("Finished scanning")
 
-    if len(ap_paths := cast(list[str], await wifi_dev.access_points)) == 0:
-        logger.info("Device on interface '%s' hasn't detected any access points. Exiting.", wifi_interface)
-        return ExitStatus.NO_ACCESS_POINT
-    access_points = [nm.AccessPoint(path) for path in cast(list[str], ap_paths)]
-    ap_by_ssid: dict[str, nm.AccessPoint] = \
-        dict(await asyncio.gather(*map(_get_ssid_ap_pair, access_points)))
+    ap_paths = await _get_ap_or_exit(wifi_dev)
+    ap_by_ssid = await _get_ap_path_by_ssid(ap_paths)
     ssids = list(ap_by_ssid.keys())
 
     cmd_delete_profile = FZF_CMD_DELETE_PROFILE.format(
@@ -268,8 +277,14 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
     )
     chosen_ap_ssid = result[0]
     if chosen_ap_ssid not in ssids:
-        raise RuntimeError(f"Chose a newly discovered network, of ssid: {chosen_ap_ssid!r}")
-    chosen_ap_path = cast(str, ap_by_ssid[chosen_ap_ssid]._remote_object_path)
+        logger.info("Available networks changed since startup. Updating internal cache.")
+        ap_paths = await _get_ap_or_exit(wifi_dev)
+        ap_by_ssid = await _get_ap_path_by_ssid(ap_paths)
+        ssids = list(ap_by_ssid.keys())
+    if chosen_ap_ssid not in ssids:
+        logger.critical("The network '%s' is not available anymore. Quitting.", chosen_ap_ssid)
+        return ExitStatus.NOT_CHANGED
+    chosen_ap_path = ap_by_ssid[chosen_ap_ssid]
     logger.debug("Using access point: '%s' (%s)", chosen_ap_ssid, chosen_ap_path)
     # yapf: enable
 
