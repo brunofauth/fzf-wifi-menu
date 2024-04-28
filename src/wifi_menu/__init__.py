@@ -247,7 +247,6 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
 
     ap_paths = await _get_ap_or_exit(wifi_dev)
     ap_by_ssid = await _get_ap_path_by_ssid(ap_paths)
-    ssids = list(ap_by_ssid.keys())
 
     cmd_delete_profile = FZF_CMD_DELETE_PROFILE.format(
         app_name=APP_NAME_QUOTED,
@@ -276,12 +275,11 @@ async def main(verbose: int = 0, scan: bool = False) -> int:
         ])
     )
     chosen_ap_ssid = result[0]
-    if chosen_ap_ssid not in ssids:
+    if chosen_ap_ssid not in ap_by_ssid.keys():
         logger.info("Available networks changed since startup. Updating internal cache.")
         ap_paths = await _get_ap_or_exit(wifi_dev)
         ap_by_ssid = await _get_ap_path_by_ssid(ap_paths)
-        ssids = list(ap_by_ssid.keys())
-    if chosen_ap_ssid not in ssids:
+    if chosen_ap_ssid not in ap_by_ssid.keys():
         logger.critical("The network '%s' is not available anymore. Quitting.", chosen_ap_ssid)
         return ExitStatus.NOT_CHANGED
     chosen_ap_path = ap_by_ssid[chosen_ap_ssid]
